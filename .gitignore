@@ -6,3 +6,7 @@ __pycache__
 node_modules/
 web/node_modules/
 web/out/
+
+# 部署运行时数据（含密钥/账号/证书），不入库
+runtime/
+deploy/.env

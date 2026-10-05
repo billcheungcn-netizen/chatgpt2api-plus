@@ -1,0 +1,72 @@
+# ============================================================
+# chatgpt2api-plus 隔离部署
+# - 独立 compose 项目名 / 容器名 / 镜像 tag / 网络，不复用服务器上任何已有资源
+# - 应用端口只绑定 127.0.0.1，由反向代理（宿主机 nginx 或本项目自带 caddy）对外提供 HTTPS
+# - 由 deploy.sh 生成 .env 后调用，不建议手动直接 up
+# ============================================================
+name: chatgpt2api-plus
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: chatgpt2api-plus:local
+    container_name: chatgpt2api-plus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT:-13001}:80"
+    volumes:
+      - ../runtime/data:/app/data
+      - ../runtime/config.json:/app/config.json
+    environment:
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-json}
+      CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:?请在 .env 中设置 CHATGPT2API_AUTH_KEY}
+      CHATGPT2API_BASE_URL: ${CHATGPT2API_BASE_URL:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    healthcheck:
+      test: ["CMD-SHELL", "for py in /app/.venv/bin/python python3 python; do command -v $$py >/dev/null 2>&1 && exec $$py -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1/version',timeout=5)\"; done; exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # 资源上限，防止挤占同机其他业务
+    mem_limit: ${APP_MEM_LIMIT:-1g}
+    cpus: ${APP_CPUS:-1.0}
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks:
+      - c2a_plus_net
+
+  # 仅当服务器 80/443 空闲时启用（deploy.sh 自动判断，profile=caddy）
+  caddy:
+    image: caddy:2-alpine
+    container_name: chatgpt2api-plus-caddy
+    restart: unless-stopped
+    profiles: ["caddy"]
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # 由 deploy.sh 根据 Caddyfile.tpl 渲染
+      - ../runtime/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../runtime/caddy/data:/data
+      - ../runtime/caddy/config:/config
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - c2a_plus_net
+
+networks:
+  c2a_plus_net:
+    name: chatgpt2api-plus-net
